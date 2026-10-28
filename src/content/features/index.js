@@ -31,7 +31,7 @@ import { settingKey } from '../core/registry.js';
 import { darkMode } from './darkMode.js';
 import * as bars from './bars.js';
 import * as pinGlobal from './pinGlobal.js';
-import { mediaAutoplay, MediaAutoplayFeature } from './mediaAutoplay.js';
+import { gifAutoplay, GifAutoplayFeature, videoAutoplay, VideoAutoplayFeature } from './mediaAutoplay.js';
 // import { autoScroll, AutoScrollFeature } from './autoScroll.js';
 
 /**
@@ -73,7 +73,8 @@ export const FEATURE_GROUPS = [
     id: 'feed',
     title: 'Feed & Media',
     features: [
-      new MediaAutoplayFeature(mediaAutoplay),
+      new GifAutoplayFeature(gifAutoplay),
+      new VideoAutoplayFeature(videoAutoplay),
       // new AutoScrollFeature(autoScroll),
     ],
   },

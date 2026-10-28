@@ -2,20 +2,25 @@
  * mediaAutoplay.js
  * ============================================================================
  * JS-driven feature — Media Autoplay + GIF Originals + Aggressive Autoplay Bypass.
- * HTML class: `pt-autoplay-media`
  *
- * 1. Autoplay every <video> inside pins (muted + loop + playsinline).
- * 2. Force-reveal the "placeholders" — until hover Pinterest renders only a jpg
- *    (pinrep-video--placeholder) and never creates a <video>. We dispatch
- *    synthetic pointer/mouse events into the center of the pin so Pinterest
- *    injects the <video>, and the MutationObserver autoplays it right away.
- * 3. GIF pins that Pinterest serves as a static jpg with the original .gif in
- *    `srcset` — we swap `src` for the original and drop `srcset`.
- * 4. Aggressive autoplay bypass — overrides HTMLMediaElement.prototype.pause,
- *    force-plays every feed video that is ≥15% visible, keeps muted/loop/
- *    playsinline pinned via MutationObserver, and runs a 600 ms heartbeat so
- *    videos keep playing even if Pinterest tries to pause them. Open closeup
- *    pins are excluded so the user keeps full player control.
+ * Разбито на две независимые под-фичи (обе живут в этом файле):
+ *
+ *   GIF Autoplay   (htmlClass: `pt-autoplay-gif`)   → GifAutoplayFeature
+ *     1. GIF pins that Pinterest serves as a static jpg with the original .gif
+ *        in `srcset` — we swap `src` for the original and drop `srcset`.
+ *
+ *   Video Autoplay (htmlClass: `pt-autoplay-video`) → VideoAutoplayFeature
+ *     1. Autoplay every <video> inside pins (muted + loop + playsinline).
+ *     2. Force-reveal the "placeholders" — until hover Pinterest renders only
+ *        a jpg (pinrep-video--placeholder) and never creates a <video>. We
+ *        dispatch synthetic pointer/mouse events into the center of the pin
+ *        so Pinterest injects the <video>, and the MutationObserver autoplays
+ *        it right away.
+ *     3. Aggressive autoplay bypass — overrides HTMLMediaElement.prototype.pause,
+ *        force-plays every feed video that is ≥15% visible, keeps muted/loop/
+ *        playsinline pinned via MutationObserver, and runs a 600 ms heartbeat
+ *        so videos keep playing even if Pinterest tries to pause them. Open
+ *        closeup pins are excluded so the user keeps full player control.
  *
  * Performance:
  *   - Every element is processed at most once (data marker).
@@ -24,12 +29,25 @@
  *
  * Selectors maintenance:
  *   Pinterest changes class names on every deploy — all selectors live in
- *   MEDIA_SELECTORS / CLOSEUP_SELECTORS.
+ *   GIF_SELECTORS / MEDIA_SELECTORS / CLOSEUP_SELECTORS.
  * ============================================================================
  */
 
 import { BaseFeature } from '../core/registry.js';
 import { DomObserver } from '../core/observer.js';
+
+// ─── GIF selectors ───────────────────────────────────────────────────────────
+
+export const GIF_SELECTORS = {
+  pin: '[data-test-id="pin"]',
+  video: 'video',
+
+  gifImg:
+    'img[src*=".gif"], img[data-src*=".gif"], ' +
+    'img[srcset*=".gif"], img[data-srcset*=".gif"]',
+};
+
+// ─── Video selectors ─────────────────────────────────────────────────────────
 
 export const MEDIA_SELECTORS = {
   pin: '[data-test-id="pin"]',
@@ -44,14 +62,7 @@ export const MEDIA_SELECTORS = {
   // Загруженный плеер
   videoPlayer: '.player_1r video',
 
-  gifImg:
-    'img[src*=".gif"], img[data-src*=".gif"], ' +
-    'img[srcset*=".gif"], img[data-srcset*=".gif"]',
-
-  media:
-    'video, [data-test-id$="-vp"], ' +
-    'img[src*=".gif"], img[data-src*=".gif"], ' +
-    'img[srcset*=".gif"], img[data-srcset*=".gif"]',
+  media: 'video, [data-test-id$="-vp"]',
 };
 
 // ─── Aggressive autoplay bypass constants ────────────────────────────────────
@@ -75,10 +86,10 @@ let _pausePatched = false;
  *  force-play attribute is absent, so leaving the patch installed is safe. */
 let _originalPause = null;
 
-const MARK = 'ptMediaDone';    // element already processed
-const GIF_MARK = 'ptGifOriginal';  // src swapped to the .gif
-const HOVER_MARK = 'ptHoverNudged';  // pin already received a synthetic hover
-const AGGRESSIVE_MARK = 'ptAggressiveHooked';  // video already hooked by bypass
+const MARK = 'ptMediaDone';           // element already processed
+const GIF_MARK = 'ptGifOriginal';     // src swapped to the .gif
+const HOVER_MARK = 'ptHoverNudged';   // pin already received a synthetic hover
+const AGGRESSIVE_MARK = 'ptAggressiveHooked'; // video already hooked by bypass
 
 /** Set to `true` to enable verbose trace logging for debugging. */
 const DEBUG = false;
@@ -94,17 +105,155 @@ const HOVER_RELEASE_MS = 500;
 /** Hover release delay after the <video> appears, ms. */
 const HOVER_RELEASE_AFTER_VIDEO_MS = 100;
 
-export const mediaAutoplay = {
-  id: 'mediaAutoplay',
-  title: 'Media Autoplay',
+// ============================================================================
+// Feature configs — registry entries
+// ============================================================================
+
+export const gifAutoplay = {
+  id: 'gifAutoplay',
+  title: 'GIF Autoplay',
   type: 'js',
-  htmlClass: 'pt-autoplay-media',
+  htmlClass: 'pt-autoplay-gif',
   defaultValue: false,
-  description: 'Autoplays videos and GIF pins with aggressive feed-video bypass.',
+  description: 'Replaces static GIF-pin thumbnails with the original animated .gif.',
 };
 
-export class MediaAutoplayFeature extends BaseFeature {
-  constructor(config = mediaAutoplay) {
+export const videoAutoplay = {
+  id: 'videoAutoplay',
+  title: 'Video Autoplay',
+  type: 'js',
+  htmlClass: 'pt-autoplay-video',
+  defaultValue: false,
+  description: 'Autoplays pin videos and aggressively bypasses Pinterest pause in the feed.',
+};
+
+// ============================================================================
+// GIF Autoplay
+// ============================================================================
+
+export class GifAutoplayFeature extends BaseFeature {
+  constructor(config = gifAutoplay) {
+    super(config);
+    /** @type {DomObserver|null} */
+    this._observer = null;
+
+    logDebug('GifAutoplayFeature constructed');
+  }
+
+  init() {
+    this._observer = new DomObserver();
+    this._observer.on((mutations) => this._onMutations(mutations));
+  }
+
+  onEnable() {
+    logDebug('GifAutoplayFeature onEnable — starting');
+    this._observer?.observe();
+    this._scan(document);
+    logDebug('GifAutoplayFeature onEnable — done');
+  }
+
+  onDisable() {
+    logDebug('GifAutoplayFeature onDisable — tearing down');
+    this._observer?.disconnect();
+    this._revert();
+    logDebug('GifAutoplayFeature onDisable — done');
+  }
+
+  // ─── Mutation plumbing ────────────────────────────────────────────────────
+
+  _onMutations(mutations) {
+    logDebug('gif _onMutations — mutations:', mutations.length);
+    for (const mutation of mutations) {
+      if (mutation.type !== 'childList' || !mutation.addedNodes.length) continue;
+      for (const node of mutation.addedNodes) {
+        if (node.nodeType !== Node.ELEMENT_NODE) continue;
+        this._scan(node);
+      }
+    }
+  }
+
+  /** Collect GIF images inside root and process them immediately. */
+  _scan(root) {
+    const found = [];
+    if (root instanceof Element && root.matches?.(GIF_SELECTORS.gifImg)) {
+      found.push(root);
+    }
+    const nested = root.querySelectorAll?.(GIF_SELECTORS.gifImg);
+    if (nested?.length) found.push(...nested);
+
+    for (const gif of found) {
+      if (gif.dataset[GIF_MARK] === '1') continue;
+      logDebug('gif _scan — processing gif:', gif);
+      this._gifToOriginal(gif);
+    }
+  }
+
+  // ─── GIF → animated original ─────────────────────────────────────────────
+
+  _gifToOriginal(img) {
+    if (!(img instanceof HTMLImageElement)) return;
+    if (img.dataset[GIF_MARK] === '1') return;
+    if (img.closest(GIF_SELECTORS.video)) return;
+    if (!img.closest(GIF_SELECTORS.pin)) return;
+
+    const gifUrl = this._findGifUrl(img);
+    if (!gifUrl) return;
+
+    const current = (img.currentSrc || img.getAttribute('src') || '').trim();
+    if (current === gifUrl) {
+      img.dataset[GIF_MARK] = '1';
+      return;
+    }
+
+    logDebug('gif _gifToOriginal — swap:', gifUrl);
+    img.dataset[GIF_MARK] = '1';
+    if (img.hasAttribute('src')) img.dataset.ptPrevSrc = img.getAttribute('src');
+    else delete img.dataset.ptPrevSrc;
+    if (img.hasAttribute('srcset')) img.dataset.ptPrevSrcset = img.getAttribute('srcset');
+    else delete img.dataset.ptPrevSrcset;
+
+    // Remove srcset first — otherwise the browser may pick the jpg variant.
+    img.removeAttribute('srcset');
+    img.src = gifUrl;
+  }
+
+  /** @returns {string|null} */
+  _findGifUrl(img) {
+    const srcset = img.getAttribute('srcset') || img.getAttribute('data-srcset') || '';
+    if (srcset) {
+      for (const entry of srcset.split(',')) {
+        const url = entry.trim().split(/\s+/)[0];
+        if (url && /\.gif(\?|#|$)/i.test(url)) return url;
+      }
+    }
+    const src = img.getAttribute('src') || img.getAttribute('data-src') || '';
+    if (/\.gif(\?|#|$)/i.test(src)) return src;
+    return null;
+  }
+
+  // ─── Revert ──────────────────────────────────────────────────────────────
+
+  _revert() {
+    document.querySelectorAll('img[data-pt-gif-original="1"]').forEach((img) => {
+      const prevSrc = img.dataset.ptPrevSrc;
+      const prevSrcset = img.dataset.ptPrevSrcset;
+
+      delete img.dataset.ptGifOriginal;
+      delete img.dataset.ptPrevSrc;
+      delete img.dataset.ptPrevSrcset;
+
+      if (prevSrcset != null) img.setAttribute('srcset', prevSrcset);
+      if (prevSrc != null) img.setAttribute('src', prevSrc);
+    });
+  }
+}
+
+// ============================================================================
+// Video Autoplay (+ Aggressive bypass)
+// ============================================================================
+
+export class VideoAutoplayFeature extends BaseFeature {
+  constructor(config = videoAutoplay) {
     super(config);
     /** @type {DomObserver|null} */
     this._observer = null;
@@ -132,7 +281,7 @@ export class MediaAutoplayFeature extends BaseFeature {
     this._onAggressiveCanPlay = this._onAggressiveCanPlay.bind(this);
     this._fallbackScan = this._fallbackScan.bind(this);
 
-    logDebug('MediaAutoplayFeature constructed');
+    logDebug('VideoAutoplayFeature constructed');
   }
 
   init() {
@@ -152,24 +301,23 @@ export class MediaAutoplayFeature extends BaseFeature {
   }
 
   onEnable() {
-    logDebug('onEnable — starting feature');
+    logDebug('VideoAutoplayFeature onEnable — starting');
     this._observer?.observe();
     this._scan(document);
     this._installAggressiveAutoplay();
-    logDebug('onEnable — done');
+    logDebug('VideoAutoplayFeature onEnable — done');
   }
 
   onDisable() {
-    logDebug('onDisable — tearing down feature');
+    logDebug('VideoAutoplayFeature onDisable — tearing down');
     this._observer?.disconnect();
     this._io?.disconnect();
     this._clearPendingLeave();
     this._teardownAggressiveAutoplay();
     this._revert();
-    logDebug('onDisable — done');
+    logDebug('VideoAutoplayFeature onDisable — done');
   }
 
-  /** Clear every pending hover-release timer (so none fire after disable). */
   _clearPendingLeave() {
     for (const tid of this._pendingLeave.values()) clearTimeout(tid);
     this._pendingLeave.clear();
@@ -178,10 +326,9 @@ export class MediaAutoplayFeature extends BaseFeature {
   // ─── Mutation plumbing ────────────────────────────────────────────────────
 
   _onMutations(mutations) {
-    logDebug('_onMutations — mutations:', mutations.length);
+    logDebug('video _onMutations — mutations:', mutations.length);
     for (const mutation of mutations) {
       if (mutation.type !== 'childList' || !mutation.addedNodes.length) continue;
-      logDebug('_onMutations — addedNodes:', mutation.addedNodes.length);
       for (const node of mutation.addedNodes) {
         if (node.nodeType !== Node.ELEMENT_NODE) continue;
         this._scan(node);
@@ -189,13 +336,8 @@ export class MediaAutoplayFeature extends BaseFeature {
     }
   }
 
-  /** Collect media elements inside root — GIFs processed immediately, video/placeholders via IO. */
+  /** Collect video / placeholder elements inside root and defer them to IO. */
   _scan(root) {
-    if (root instanceof Element) {
-      logDebug('_scan — node:', root.tagName, root.className?.slice(0, 80),
-        'test-id:', root.dataset?.testId || '');
-    }
-
     const found = [];
     if (root instanceof Element && root.matches?.(MEDIA_SELECTORS.media)) {
       found.push(root);
@@ -203,21 +345,8 @@ export class MediaAutoplayFeature extends BaseFeature {
     const nested = root.querySelectorAll?.(MEDIA_SELECTORS.media);
     if (nested?.length) found.push(...nested);
 
-    logDebug('_scan — found media elements:', found.length);
-
-    // GIFs: process immediately, no need to wait for intersection.
-    const gifs = found.filter((el) => el.matches(MEDIA_SELECTORS.gifImg));
-    for (const gif of gifs) {
-      if (gif.dataset[GIF_MARK] === '1') continue;
-      logDebug('_scan — processing gif immediately:', gif);
-      this._gifToOriginal(gif);
-    }
-
-    // Video / placeholders: defer to IntersectionObserver.
     for (const el of found) {
       if (el.dataset?.[MARK] === '1') continue;
-      if (el.matches(MEDIA_SELECTORS.gifImg)) continue; // already handled above
-      logDebug('_scan — observing:', el);
       this._io?.observe(el);
     }
   }
@@ -225,18 +354,10 @@ export class MediaAutoplayFeature extends BaseFeature {
   // ─── Processing ──────────────────────────────────────────────────────────
 
   _processOne(el) {
-    if (!(el instanceof Element)) {
-      logDebug('_processOne — not an element, skipping');
-      return;
-    }
-
-    logDebug('_processOne — processing:', el);
+    if (!(el instanceof Element)) return;
 
     if (el.matches(MEDIA_SELECTORS.video)) {
-      if (el.dataset[MARK] === '1') {
-        logDebug('_processOne — video already marked, skipping');
-        return;
-      }
+      if (el.dataset[MARK] === '1') return;
       el.dataset[MARK] = '1';
       this._autoplayVideo(el);
       this._processAggressiveVideo(el);
@@ -244,28 +365,14 @@ export class MediaAutoplayFeature extends BaseFeature {
     }
 
     if (el.matches(MEDIA_SELECTORS.videoPlaceholder)) {
-      logDebug('_processOne — found videoPlaceholder', el);
       const pin = el.closest(MEDIA_SELECTORS.pin);
-      if (!pin || pin.dataset[HOVER_MARK] === '1') {
-        logDebug('_processOne — placeholder skipped (no pin or already nudged)', el);
-        return;
-      }
+      if (!pin || pin.dataset[HOVER_MARK] === '1') return;
       pin.dataset[HOVER_MARK] = '1';
       logDebug('_processOne — nudging pin to reveal video', pin);
       this._nudgePinToRevealVideo(pin);
       return;
     }
-
-    if (el.matches(MEDIA_SELECTORS.gifImg)) {
-      if (el.dataset[GIF_MARK] === '1') {
-        logDebug('_processOne — gif already marked, skipping');
-        return;
-      }
-      logDebug('_processOne — processing gif img', el);
-      this._gifToOriginal(el);
-    }
   }
-
 
   /**
    * Pinterest only creates the <video> on hover. We dispatch synthetic
@@ -274,8 +381,6 @@ export class MediaAutoplayFeature extends BaseFeature {
    * stuck in the hover state.
    */
   _nudgePinToRevealVideo(pin) {
-    logDebug('_nudgePinToRevealVideo — start', pin);
-
     const target = pin.querySelector('a[href*="/pin/"]') || pin;
 
     // ⚠️ НЕТ scrollIntoView! Он и вызывал бесконечный автоскролл.
@@ -303,7 +408,6 @@ export class MediaAutoplayFeature extends BaseFeature {
     }
 
     pin.dataset[HOVER_MARK] = '2';
-    logDebug('_nudgePinToRevealVideo — done');
   }
 
   _releasePin(pin) {
@@ -316,6 +420,7 @@ export class MediaAutoplayFeature extends BaseFeature {
     const r = el.getBoundingClientRect();
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
   }
+
   /**
    * Single dispatcher for synthetic pointer/mouse events.
    * - pointerover/out + mouseover/out — bubble and carry relatedTarget;
@@ -366,20 +471,14 @@ export class MediaAutoplayFeature extends BaseFeature {
 
       try {
         target.dispatchEvent(new Ctor(type, init));
-      } catch {
-        /* ignore */
-      }
+      } catch { /* ignore */ }
     }
   }
 
   // ─── Video autoplay ──────────────────────────────────────────────────────
 
   _autoplayVideo(video) {
-    if (video.dataset?.ptAutoplayed === '1') {
-      logDebug('_autoplayVideo — already autoplayed, skipping', video);
-      return;
-    }
-    logDebug('_autoplayVideo — starting', video);
+    if (video.dataset?.ptAutoplayed === '1') return;
     video.dataset.ptAutoplayed = '1';
 
     video.muted = true;
@@ -410,17 +509,13 @@ export class MediaAutoplayFeature extends BaseFeature {
       // Small delay so Pinterest has time to "bind" the video to the pin.
       setTimeout(() => this._releasePin(pin), HOVER_RELEASE_AFTER_VIDEO_MS);
     }
-    logDebug('_autoplayVideo — done', video);
   }
 
   _tryPlay(video) {
-    logDebug('_tryPlay — calling video.play()', video);
     try {
       const r = video.play();
       if (r && typeof r.catch === 'function') {
-        r.catch(() => {
-          logDebug('_tryPlay — play() promise rejected', video);
-        });
+        r.catch(() => { logDebug('_tryPlay — play() rejected', video); });
       }
     } catch (err) {
       logDebug('_tryPlay — play() threw', err, video);
@@ -435,38 +530,27 @@ export class MediaAutoplayFeature extends BaseFeature {
 
     // Patch the prototype exactly once per page.
     if (!_pausePatched) {
-      logDebug('_installAggressiveAutoplay — patching HTMLMediaElement.prototype.pause');
       _originalPause = HTMLMediaElement.prototype.pause;
       HTMLMediaElement.prototype.pause = function () {
         const isForcePlayed = this.hasAttribute(FORCE_PLAY_ATTR);
         const tabVisible = !document.hidden;
-        const inViewport = MediaAutoplayFeature._isElementInViewport(this);
+        const inViewport = VideoAutoplayFeature._isElementInViewport(this);
         if (isForcePlayed && tabVisible && inViewport) {
           logDebug('[pause] BLOCKED — force-played & visible', this);
           return; // block Pinterest's pause() on force-played, visible videos
         }
-        logDebug('[pause] PASSTHROUGH', {
-          isForcePlayed,
-          tabVisible,
-          inViewport,
-          video: this,
-        });
         return _originalPause.call(this);
       };
       _pausePatched = true;
-    } else {
-      logDebug('_installAggressiveAutoplay — pause already patched, skipping');
     }
 
     // Anti-React: keep muted / loop / playsinline pinned on force-played videos.
     this._attrObserver = new MutationObserver((mutations) => {
-      logDebug('_attrObserver callback — mutations:', mutations.length);
       for (const mut of mutations) {
         if (mut.type !== 'attributes') continue;
         const video = mut.target;
         if (!(video instanceof HTMLMediaElement)) continue;
         if (video.hasAttribute(FORCE_PLAY_ATTR)) {
-          logDebug('_attrObserver — enforcing attributes on', video);
           this._enforceAttributes(video);
         }
       }
@@ -474,21 +558,15 @@ export class MediaAutoplayFeature extends BaseFeature {
 
     // Visibility: force-play when ≥15% in viewport, release when it leaves.
     this._aggressiveIo = new IntersectionObserver((entries) => {
-      logDebug('_aggressiveIo callback — entries:', entries.length);
       for (const entry of entries) {
         const video = entry.target;
         if (!(video instanceof HTMLMediaElement)) continue;
         if (entry.isIntersecting && entry.intersectionRatio > 0.15) {
-          logDebug('_aggressiveIo — INTERSECTING ≥15%, force-play', video);
           video.setAttribute(FORCE_PLAY_ATTR, 'true');
           this._aggressiveVideos.add(video);
           this._enforceAttributes(video);
-          if (video.paused && video.currentSrc) {
-            logDebug('_aggressiveIo — paused & has src, trying play', video);
-            this._tryPlay(video);
-          }
+          if (video.paused && video.currentSrc) this._tryPlay(video);
         } else {
-          logDebug('_aggressiveIo — LEFT viewport, release', video);
           video.removeAttribute(FORCE_PLAY_ATTR);
           this._aggressiveVideos.delete(video);
           if (_originalPause) _originalPause.call(video);
@@ -498,7 +576,6 @@ export class MediaAutoplayFeature extends BaseFeature {
 
     // Scan newly added DOM for videos.
     this._aggressiveMo = new MutationObserver((mutations) => {
-      logDebug('_aggressiveMo callback — mutations:', mutations.length);
       for (const mut of mutations) {
         for (const node of mut.addedNodes) {
           if (node.nodeType !== 1) continue;
@@ -507,7 +584,6 @@ export class MediaAutoplayFeature extends BaseFeature {
       }
     });
 
-    logDebug('_installAggressiveAutoplay — scanning document.body');
     this._scanAggressive(document.body);
     this._aggressiveMo.observe(document.documentElement, {
       childList: true,
@@ -521,7 +597,6 @@ export class MediaAutoplayFeature extends BaseFeature {
     // Fallback scan — catches videos React reuses without addedNodes,
     // and nudges video pins that still lack a <video>.
     this._fallbackScanInterval = setInterval(() => {
-      logDebug('[fallbackScan] tick');
       this._fallbackScan();
       this._scanVideoPins();
     }, 2000);
@@ -531,15 +606,11 @@ export class MediaAutoplayFeature extends BaseFeature {
 
   /** Tear down the aggressive bypass (called on disable / unload). */
   _teardownAggressiveAutoplay() {
-    logDebug('_teardownAggressiveAutoplay — start, force-played videos:', this._aggressiveVideos.size);
-
     if (this._heartbeatInterval) {
-      logDebug('_teardownAggressiveAutoplay — clearing heartbeat');
       clearInterval(this._heartbeatInterval);
       this._heartbeatInterval = null;
     }
     if (this._fallbackScanInterval) {
-      logDebug('_teardownAggressiveAutoplay — clearing fallback scan');
       clearInterval(this._fallbackScanInterval);
       this._fallbackScanInterval = null;
     }
@@ -550,62 +621,41 @@ export class MediaAutoplayFeature extends BaseFeature {
 
     // Release every force-played video so Pinterest can pause it again.
     this._aggressiveVideos.forEach((video) => {
-      logDebug('_teardownAggressiveAutoplay — releasing', video);
       video.removeAttribute(FORCE_PLAY_ATTR);
     });
     this._aggressiveVideos.clear();
 
     document.querySelectorAll(`video[${FORCE_PLAY_ATTR}]`).forEach((video) => {
-      logDebug('_teardownAggressiveAutoplay — releasing stray', video);
       video.removeAttribute(FORCE_PLAY_ATTR);
     });
 
     // Restore original pause() prototype — prevents patch chains on re-enable.
     if (_pausePatched && _originalPause) {
       HTMLMediaElement.prototype.pause = _originalPause;
-      logDebug('_teardownAggressiveAutoplay — restored HTMLMediaElement.prototype.pause');
     }
     _pausePatched = false;
     _originalPause = null;
-
-    logDebug('_teardownAggressiveAutoplay — done');
   }
 
   /** Recursively scan root for <video> elements and hook them. */
   _scanAggressive(root) {
-    if (!root) {
-      logDebug('_scanAggressive — root is null/undefined, skipping');
-      return;
-    }
+    if (!root) return;
     if (root.tagName === 'VIDEO') {
-      logDebug('_scanAggressive — root is VIDEO', root);
       this._processAggressiveVideo(root);
     }
     if (root.querySelectorAll) {
-      const videos = root.querySelectorAll('video');
-      logDebug('_scanAggressive — found videos:', videos.length);
-      videos.forEach((video) => this._processAggressiveVideo(video));
+      root.querySelectorAll('video').forEach((video) => this._processAggressiveVideo(video));
     }
   }
 
   /** Hook a single <video> into the aggressive bypass. */
   _processAggressiveVideo(video) {
-    if (!(video instanceof HTMLVideoElement)) {
-      logDebug('_processAggressiveVideo — not HTMLVideoElement, skipping');
-      return;
-    }
-    if (video.dataset[AGGRESSIVE_MARK] === 'true') {
-      logDebug('_processAggressiveVideo — already hooked, skipping', video);
-      return;
-    }
+    if (!(video instanceof HTMLVideoElement)) return;
+    if (video.dataset[AGGRESSIVE_MARK] === 'true') return;
 
     // Never aggressively autoplay inside an open closeup (pin detail view).
-    if (video.closest(CLOSEUP_SELECTORS)) {
-      logDebug('_processAggressiveVideo — inside closeup, skipping', video);
-      return;
-    }
+    if (video.closest(CLOSEUP_SELECTORS)) return;
 
-    logDebug('_processAggressiveVideo — hooking', video);
     video.dataset[AGGRESSIVE_MARK] = 'true';
 
     this._attrObserver?.observe(video, {
@@ -615,7 +665,6 @@ export class MediaAutoplayFeature extends BaseFeature {
 
     video.addEventListener('canplay', this._onAggressiveCanPlay, true);
     this._aggressiveIo?.observe(video);
-    logDebug('_processAggressiveVideo — hooked, observing attr+io', video);
   }
 
   /** Instant start on canplay when the video is force-played. */
@@ -623,43 +672,27 @@ export class MediaAutoplayFeature extends BaseFeature {
     const video = event.target;
     if (!(video instanceof HTMLMediaElement)) return;
     if (video.hasAttribute(FORCE_PLAY_ATTR) && video.paused) {
-      logDebug('_onAggressiveCanPlay — force-played & paused, trying play', video);
       this._tryPlay(video);
     }
   }
 
   /** Force muted / loop / playsinline attributes (anti-React). */
   _enforceAttributes(video) {
-    const changed = [];
-    if (!video.muted) { video.muted = true; changed.push('muted'); }
-    if (!video.playsInline) { video.playsInline = true; changed.push('playsInline'); }
-    if (!video.loop) { video.loop = true; changed.push('loop'); }
-    if (!video.hasAttribute('muted')) { video.setAttribute('muted', ''); changed.push('attr:muted'); }
-    if (!video.hasAttribute('playsinline')) { video.setAttribute('playsinline', ''); changed.push('attr:playsinline'); }
-    if (!video.hasAttribute('loop')) { video.setAttribute('loop', ''); changed.push('attr:loop'); }
-    if (changed.length) {
-      logDebug('_enforceAttributes — applied:', changed.join(', '), video);
-    }
+    if (!video.muted) video.muted = true;
+    if (!video.playsInline) video.playsInline = true;
+    if (!video.loop) video.loop = true;
+    if (!video.hasAttribute('muted')) video.setAttribute('muted', '');
+    if (!video.hasAttribute('playsinline')) video.setAttribute('playsinline', '');
+    if (!video.hasAttribute('loop')) video.setAttribute('loop', '');
   }
 
   /** Heartbeat — keeps force-played, visible videos playing. */
   _startHeartbeat() {
-    if (this._heartbeatInterval) {
-      logDebug('_startHeartbeat — already running, skipping');
-      return;
-    }
-    logDebug('_startHeartbeat — starting (600ms interval)');
+    if (this._heartbeatInterval) return;
     this._heartbeatInterval = setInterval(() => {
-      if (document.hidden) {
-        logDebug('[heartbeat] tab hidden — skipping');
-        return;
-      }
-      logDebug('[heartbeat] tick — force-played videos:', this._aggressiveVideos.size);
+      if (document.hidden) return;
       this._aggressiveVideos.forEach((video) => {
-        if (video.paused && video.currentSrc) {
-          logDebug('[heartbeat] video paused & has src — trying play', video);
-          this._tryPlay(video);
-        }
+        if (video.paused && video.currentSrc) this._tryPlay(video);
       });
     }, 600); // 2 checks per second
   }
@@ -667,18 +700,11 @@ export class MediaAutoplayFeature extends BaseFeature {
   /** Fallback scan — walks all <video> in DOM and hooks any missed by observers. */
   _fallbackScan() {
     try {
-      const videos = document.querySelectorAll('video');
-      logDebug('[fallbackScan] found videos in DOM:', videos.length);
-      let hooked = 0;
-      for (const video of videos) {
-        if (video.dataset[AGGRESSIVE_MARK] === 'true') continue;
-        if (video.closest(CLOSEUP_SELECTORS)) continue;
+      document.querySelectorAll('video').forEach((video) => {
+        if (video.dataset[AGGRESSIVE_MARK] === 'true') return;
+        if (video.closest(CLOSEUP_SELECTORS)) return;
         this._processAggressiveVideo(video);
-        hooked++;
-      }
-      if (hooked > 0) {
-        logDebug('[fallbackScan] newly hooked videos:', hooked);
-      }
+      });
     } catch (err) {
       logDebug('[fallbackScan] error:', err);
     }
@@ -691,15 +717,15 @@ export class MediaAutoplayFeature extends BaseFeature {
   _scanVideoPins() {
     try {
       const pins = document.querySelectorAll(MEDIA_SELECTORS.pin);
-      let nudged = 0;
+      let nudgedCount = 0;
 
       for (const pin of pins) {
         // Уже нудили (через IO или через этот таймер) — пропускаем.
-        const nudged = pin.dataset[HOVER_MARK];
-        if (nudged === '1') continue;                       // ещё в процессе — не трогаем
-        if (nudged === '2') {
+        const nudgeState = pin.dataset[HOVER_MARK];
+        if (nudgeState === '1') continue;                    // ещё в процессе — не трогаем
+        if (nudgeState === '2') {
           const lastAt = Number(pin.dataset.ptNudgeAt || 0);
-          if (Date.now() - lastAt < 10_000) continue;       // 10 сек кулдаун
+          if (Date.now() - lastAt < 10_000) continue;        // 10 сек кулдаун
         }
 
         // Это видео-пин? (метка длительности)
@@ -724,161 +750,62 @@ export class MediaAutoplayFeature extends BaseFeature {
         if (!inViewport) continue;
 
         pin.dataset[HOVER_MARK] = '1';
-        logDebug('_scanVideoPins — nudging visible video pin:',
-          pin.dataset.testPinId || pin);
         pin.dataset.ptNudgeAt = String(Date.now());
         this._nudgePinToRevealVideo(pin);
-        nudged++;
+        nudgedCount++;
       }
 
-      if (nudged > 0) logDebug('_scanVideoPins — nudged:', nudged);
+      if (nudgedCount > 0) logDebug('_scanVideoPins — nudged:', nudgedCount);
     } catch (err) {
       logDebug('_scanVideoPins — error:', err);
     }
   }
+
   /** visibilitychange handler — pause when tab hides, resume when it shows. */
   _onVisibilityChange() {
-    logDebug('_onVisibilityChange — document.hidden:', document.hidden, 'force-played:', this._aggressiveVideos.size);
     if (document.hidden) {
       this._aggressiveVideos.forEach((video) => {
-        logDebug('_onVisibilityChange — pausing (tab hidden)', video);
         if (_originalPause) _originalPause.call(video);
       });
     } else {
       this._aggressiveVideos.forEach((video) => {
-        if (video.paused && video.currentSrc) {
-          logDebug('_onVisibilityChange — resuming (tab visible)', video);
-          this._tryPlay(video);
-        }
+        if (video.paused && video.currentSrc) this._tryPlay(video);
       });
     }
   }
 
   /** Viewport check (≥15% from top/bottom edges). */
   static _isElementInViewport(el) {
-    if (!el || !el.getBoundingClientRect) {
-      logDebug('_isElementInViewport — invalid element', el);
-      return false;
-    }
+    if (!el || !el.getBoundingClientRect) return false;
     const rect = el.getBoundingClientRect();
-    const result = (
+    return (
       rect.top < window.innerHeight * 0.85 &&
       rect.bottom > window.innerHeight * 0.15 &&
       rect.left < window.innerWidth &&
       rect.right > 0
     );
-    logDebug('_isElementInViewport —', result, { rect, innerHeight: window.innerHeight, innerWidth: window.innerWidth });
-    return result;
   }
 
-  // ─── GIF → animated original ─────────────────────────────────────────────
-
-  _gifToOriginal(img) {
-    logDebug('_gifToOriginal — start', img);
-    if (!(img instanceof HTMLImageElement)) {
-      logDebug('_gifToOriginal — not HTMLImageElement, skipping');
-      return;
-    }
-    if (img.dataset[GIF_MARK] === '1') {
-      logDebug('_gifToOriginal — already processed, skipping');
-      return;
-    }
-    if (img.closest(MEDIA_SELECTORS.video)) {
-      logDebug('_gifToOriginal — inside video element, skipping');
-      return;
-    }
-    if (!img.closest(MEDIA_SELECTORS.pin)) {
-      logDebug('_gifToOriginal — not inside a pin, skipping');
-      return;
-    }
-
-    const gifUrl = this._findGifUrl(img);
-    if (!gifUrl) {
-      logDebug('_gifToOriginal — no gif url found, skipping');
-      return;
-    }
-
-    const current = (img.currentSrc || img.getAttribute('src') || '').trim();
-    if (current === gifUrl) {
-      logDebug('_gifToOriginal — src already is the gif, marking done');
-      img.dataset[GIF_MARK] = '1';
-      return;
-    }
-
-    logDebug('_gifToOriginal — swapping src to gif:', gifUrl, 'on', img);
-    img.dataset[GIF_MARK] = '1';
-    if (img.hasAttribute('src')) img.dataset.ptPrevSrc = img.getAttribute('src');
-    else delete img.dataset.ptPrevSrc;
-    if (img.hasAttribute('srcset')) img.dataset.ptPrevSrcset = img.getAttribute('srcset');
-    else delete img.dataset.ptPrevSrcset;
-
-    // Remove srcset first — otherwise the browser may pick the jpg variant.
-    img.removeAttribute('srcset');
-    img.src = gifUrl;
-    logDebug('_gifToOriginal — done', img);
-  }
-
-  /** @returns {string|null} */
-  _findGifUrl(img) {
-    const srcset = img.getAttribute('srcset') || img.getAttribute('data-srcset') || '';
-    if (srcset) {
-      for (const entry of srcset.split(',')) {
-        const url = entry.trim().split(/\s+/)[0];
-        if (url && /\.gif(\?|#|$)/i.test(url)) {
-          logDebug('_findGifUrl — found in srcset:', url);
-          return url;
-        }
-      }
-    }
-    const src = img.getAttribute('src') || img.getAttribute('data-src') || '';
-    if (/\.gif(\?|#|$)/i.test(src)) {
-      logDebug('_findGifUrl — found in src:', src);
-      return src;
-    }
-    logDebug('_findGifUrl — no gif found');
-    return null;
-  }
-
-  // ─── Revert on disable ───────────────────────────────────────────────────
+  // ─── Revert ──────────────────────────────────────────────────────────────
 
   _revert() {
-    logDebug('_revert — start');
-
-    document.querySelectorAll('img[data-pt-gif-original="1"]').forEach((img) => {
-      logDebug('_revert — restoring gif img', img);
-      const prevSrc = img.dataset.ptPrevSrc;
-      const prevSrcset = img.dataset.ptPrevSrcset;
-
-      delete img.dataset.ptGifOriginal;
-      delete img.dataset.ptPrevSrc;
-      delete img.dataset.ptPrevSrcset;
-
-      if (prevSrcset != null) img.setAttribute('srcset', prevSrcset);
-      if (prevSrc != null) img.setAttribute('src', prevSrc);
-    });
-
     document.querySelectorAll('video[data-pt-autoplayed="1"]').forEach((video) => {
-      logDebug('_revert — restoring autoplayed video', video);
       delete video.dataset.ptAutoplayed;
       video.removeAttribute('autoplay');
       try { video.pause?.(); } catch { /* noop */ }
     });
 
     document.querySelectorAll('video[data-pt-aggressive-hooked="true"]').forEach((video) => {
-      logDebug('_revert — restoring aggressive video', video);
       delete video.dataset.ptAggressiveHooked;
       video.removeAttribute(FORCE_PLAY_ATTR);
     });
 
-    document.querySelectorAll('[data-pt-hover-nudged="1"]').forEach((el) => {
-      logDebug('_revert — clearing hover-nudged', el);
+    document.querySelectorAll('[data-pt-hover-nudged]').forEach((el) => {
       delete el.dataset.ptHoverNudged;
+      delete el.dataset.ptNudgeAt;
     });
     document.querySelectorAll('[data-pt-media-done="1"]').forEach((el) => {
-      logDebug('_revert — clearing media-done', el);
       delete el.dataset.ptMediaDone;
     });
-
-    logDebug('_revert — done');
   }
 }
