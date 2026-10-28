@@ -44,18 +44,18 @@ body {
   border-radius: 8px;
   background: var(--pt-red);
   position: relative;
-}
 
-.logo::after {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 10px;
-  height: 10px;
-  border-radius: 2px;
-  background: #fff;
-  transform: translate(-50%, -50%) rotate(45deg);
+  &::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    background: #fff;
+    transform: translate(-50%, -50%) rotate(45deg);
+  }
 }
 
 .title {
@@ -99,11 +99,11 @@ body {
   border-radius: 12px;
   overflow: hidden;
   background: var(--bg);
-}
 
-/* Every row gets a top divider; the first one sits flush with the border. */
-.group-items>*+* {
-  border-top: 1px solid var(--border);
+  /* Every row gets a top divider; the first one sits flush with the border. */
+  &>*+* {
+    border-top: 1px solid var(--border);
+  }
 }
 
 .toggle-row {
@@ -113,10 +113,10 @@ body {
   padding: 12px 14px;
   cursor: pointer;
   transition: background 0.12s;
-}
 
-.toggle-row:hover {
-  background: var(--bg-soft);
+  &:hover {
+    background: var(--bg-soft);
+  }
 }
 
 .toggle-body {
@@ -207,10 +207,12 @@ body {
   cursor: pointer;
 }
 
-.setting-range-input:focus-visible,
-.setting-select:focus-visible {
-  outline: 2px solid var(--pt-red);
-  outline-offset: 2px;
+.setting-select,
+.setting-range-input {
+  &:focus-visible {
+    outline: 2px solid var(--pt-red);
+    outline-offset: 2px;
+  }
 }
 
 /* Hidden but focusable checkbox */
@@ -221,6 +223,19 @@ body {
   height: 1px;
   overflow: hidden;
   clip-path: inset(50%);
+
+  &:checked+.toggle-body+.toggle-track {
+    background: var(--track-on);
+
+    & .toggle-thumb {
+      transform: translateX(16px);
+    }
+  }
+
+  &:focus-visible+.toggle-body+.toggle-track {
+    outline: 2px solid var(--pt-red);
+    outline-offset: 2px;
+  }
 }
 
 /* ---------- Switch ---------- */
@@ -244,19 +259,6 @@ body {
   background: #fff;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
   transition: transform 0.15s;
-}
-
-.toggle-input:checked+.toggle-body+.toggle-track {
-  background: var(--track-on);
-}
-
-.toggle-input:checked+.toggle-body+.toggle-track .toggle-thumb {
-  transform: translateX(16px);
-}
-
-.toggle-input:focus-visible+.toggle-body+.toggle-track {
-  outline: 2px solid var(--pt-red);
-  outline-offset: 2px;
 }
 
 /* ---------- Footer ---------- */
