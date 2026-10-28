@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "BetterPinterest",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Modular Pinterest UI tweaks — dark mode, bars/pin hiding, media autoplay and configurable auto scroll.",
   "permissions": ["storage"],
   "background": {

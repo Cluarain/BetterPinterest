@@ -583,6 +583,7 @@ html.pt-hide-left-menu {
 ---------------------------------------------------------------------------- */
 html.pt-hide-pin-menu-footer {
 
+   [data-test-id="proactive-outreach-flyout"],
    [data-test-id="pin-missing-alt-text"],
    [data-test-id="pin-with-alt-text"] {
       [data-test-id="pointer-events-wrapper"] {
@@ -621,8 +622,4 @@ html.pt-hide-pin-header {
    Styling for the <video> elements created by mediaAutoplay.js — kept here
    (CSS) instead of inline styles, per the DRY approach.
 ---------------------------------------------------------------------------- */
-html.pt-autoplay-media video[data-pt-gif-video] {
-   display: block;
-   width: 100%;
-   height: auto;
-}
+/* html.pt-autoplay-media video {} */
