@@ -3,7 +3,7 @@
  * ============================================================================
  * JS-driven feature — Media Autoplay + GIF Originals + Aggressive Autoplay Bypass.
  *
- * Разбито на две независимые под-фичи (обе живут в этом файле):
+ * Разбито на три независимые под-фичи (все живут в этом файле):
  *
  *   GIF Autoplay   (htmlClass: `pt-autoplay-gif`)   → GifAutoplayFeature
  *     1. GIF pins that Pinterest serves as a static jpg with the original .gif
@@ -22,6 +22,10 @@
  *        so videos keep playing even if Pinterest tries to pause them. Open
  *        closeup pins are excluded so the user keeps full player control.
  *
+ *   Carousel Autoplay (htmlClass: `pt-autoplay-carousel`) → CarouselAutoplayFeature
+ *     1. Advances carousel pins one slide forward (wraps last→first) on a
+ *        timer — the interval is a user setting (0.1–1000 s slider).
+ *
  * Performance:
  *   - Every element is processed at most once (data marker).
  *   - IntersectionObserver defers work until the element enters the viewport.
@@ -29,7 +33,7 @@
  *
  * Selectors maintenance:
  *   Pinterest changes class names on every deploy — all selectors live in
- *   GIF_SELECTORS / MEDIA_SELECTORS / CLOSEUP_SELECTORS.
+ *   GIF_SELECTORS / MEDIA_SELECTORS / CLOSEUP_SELECTORS / CAROUSEL_SELECTORS.
  * ============================================================================
  */
 
@@ -807,5 +811,124 @@ export class VideoAutoplayFeature extends BaseFeature {
     document.querySelectorAll('[data-pt-media-done="1"]').forEach((el) => {
       delete el.dataset.ptMediaDone;
     });
+  }
+}
+
+// ============================================================================
+// Carousel Autoplay
+// ============================================================================
+
+/** Interval between automatic swipes, seconds — number input in the popup. */
+const INTERVAL_SETTING = {
+  id: 'interval',
+  label: 'Interval',
+  type: 'number',
+  defaultValue: 3,
+  min: 0.1,
+  max: 1000,
+  step: 0.1,
+  unit: 's',
+};
+
+export const carouselAutoplay = {
+  id: 'carouselAutoplay',
+  title: 'Carousel autoplay',
+  type: 'js',
+  htmlClass: 'pt-autoplay-carousel',
+  defaultValue: false,
+  description: 'Automatically advances carousel pins in the feed',
+  settings: [INTERVAL_SETTING],
+};
+
+export const CAROUSEL_SELECTORS = {
+  pin: '[data-test-id="pin"]',
+  swiper: '[data-test-id^="carousel-swiper-"]',
+};
+
+/** Slides are 100% of the row wide; Pinterest shifts all of them via transform. */
+const SLIDE_STEP_PCT = 100;
+
+/**
+ * Advance a pin's carousel one slide forward (wraps last → first).
+ *
+ * Pinterest renders slides as `[data-test-id^="carousel-swiper-"]` (min-width
+ * 100%) in a flex row and positions them with `transform: translate(-N00%, 0%)`
+ * on EVERY slide simultaneously. "Next slide" = +100%; at 0% wrap to
+ * -(total-1)*100%. There are no public next/prev buttons in the DOM
+ * (pointer-events: none on the slider rail), hence the direct style edit.
+ *
+ * @param {Element} pin root `[data-test-id="pin"]`
+ * @returns {boolean} true if the slide actually moved
+ */
+export function autoSwipe(pin) {
+  if (!(pin instanceof Element)) return false;
+  const swipers = pin.querySelectorAll(CAROUSEL_SELECTORS.swiper);
+  if (swipers.length < 2) return false; // not a carousel
+
+  // All slides share one transform — read the position from the first.
+  const m = (swipers[0].style.transform || '').match(/translate\(\s*(-?\d+(?:\.\d+)?)%/);
+  if (!m) return false;
+
+  let nextPct = parseFloat(m[1]) + SLIDE_STEP_PCT;
+  const wrap = nextPct > 0;
+  if (wrap) nextPct = -(swipers.length - 1) * SLIDE_STEP_PCT;
+  const transform = `translate(${nextPct}%, 0%)`;
+
+  for (const s of swipers) {
+    if (!wrap) {
+      s.style.transform = transform;
+      continue;
+    }
+    // 0% → -(n-1)*100% must NOT animate (it would sweep through every slide).
+    const prev = s.style.transition;
+    s.style.transition = 'none';
+    s.style.transform = transform;
+    void s.offsetWidth; // force reflow so 'none' applies to this frame
+    s.style.transition = prev; // '' restores the stylesheet transition
+  }
+  return true;
+}
+
+export class CarouselAutoplayFeature extends BaseFeature {
+  constructor(config = carouselAutoplay) {
+    super(config);
+    /** @type {number|null} */
+    this._timer = null;
+    this._tick = this._tick.bind(this);
+  }
+
+  onEnable() {
+    this._tick(); // first pass right away
+    this._timer = setInterval(this._tick, this._intervalMs());
+  }
+
+  onDisable() {
+    clearInterval(this._timer);
+    this._timer = null;
+  }
+
+  /** Persisted swipe interval, seconds → ms (clamped to the 0.1–1000 range). */
+  _intervalMs() {
+    const n = Number(this.settingValues.interval);
+    const sec = Number.isFinite(n) ? n : INTERVAL_SETTING.defaultValue;
+    return Math.min(Math.max(sec, INTERVAL_SETTING.min), INTERVAL_SETTING.max) * 1000;
+  }
+
+  /** Popup changed the interval — restart the running timer with it. */
+  onSettings() {
+    if (this._timer == null) return;
+    clearInterval(this._timer);
+    this._timer = setInterval(this._tick, this._intervalMs());
+  }
+
+  /** One timer for all pins; hover pauses, offscreen pins are skipped. */
+  _tick() {
+    if (document.hidden) return;
+    for (const pin of document.querySelectorAll(CAROUSEL_SELECTORS.pin)) {
+      if (pin.matches(':hover')) continue;
+      const r = pin.getBoundingClientRect();
+      if (r.bottom <= 0 || r.top >= innerHeight || r.right <= 0 || r.left >= innerWidth) continue;
+      autoSwipe(pin); // false for non-carousels — that IS the filter
+    }
   }
 }

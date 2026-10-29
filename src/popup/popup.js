@@ -53,9 +53,9 @@ function createRow(feature) {
   title.className = 'toggle-title';
   title.textContent = feature.title;
 
-  const badge = document.createElement('span');
-  badge.className = `toggle-badge toggle-badge--${feature.type}`;
-  badge.textContent = feature.type === 'js' ? 'JS' : 'CSS';
+  // const badge = document.createElement('span');
+  // badge.className = `toggle-badge toggle-badge--${feature.type}`;
+  // badge.textContent = feature.type === 'js' ? 'JS' : 'CSS';
 
   // "ⓘ" marker — the tooltip trigger AND its positioning anchor: the
   // tooltip element lives INSIDE it (kept out of aria-hidden so the
@@ -76,7 +76,7 @@ function createRow(feature) {
   tooltip.textContent = feature.description;
   hint.append(tooltip);
 
-  titleRow.append(title, badge, hint);
+  titleRow.append(title, hint);
 
   const track = document.createElement('span');
   track.className = 'toggle-track';
@@ -86,11 +86,37 @@ function createRow(feature) {
   track.appendChild(thumb);
 
   body.append(titleRow);
-  label.append(input, body, track);
+  label.append(input, body, ...createInlineSettings(feature), track);
   return label;
 }
 
-/** Build the DOM for one feature setting — a slider (`range`) or a `select`. */
+/**
+ * Number settings render INSIDE the feature's toggle row, right before the
+ * switch (no separate setting row below). The row is a <label> around the
+ * checkbox — a click on the embedded input would flip the switch, so its
+ * default action is suppressed (same trick as the ⓘ hint marker above).
+ */
+function createInlineSettings(feature) {
+  const nodes = [];
+  for (const setting of feature.settings ?? []) {
+    if (setting.type !== 'number') continue;
+    const wrap = document.createElement('span');
+    wrap.className = 'setting-inline';
+    const input = createNumberInput(feature, setting, `setting-${feature.id}-${setting.id}`);
+    input.addEventListener('click', (event) => event.preventDefault());
+    wrap.append(input);
+    if (setting.unit) {
+      const unit = document.createElement('span');
+      unit.className = 'setting-unit';
+      unit.textContent = setting.unit;
+      wrap.append(unit);
+    }
+    nodes.push(wrap);
+  }
+  return nodes;
+}
+
+/** Build the DOM for one feature setting — a `select` on its own row. */
 function createSettingRow(feature, setting) {
   const row = document.createElement('div');
   row.className = 'setting-row';
@@ -108,29 +134,19 @@ function createSettingRow(feature, setting) {
   label.textContent = setting.label;
   head.append(label);
 
-  let control;
-  if (setting.type === 'range') {
-    const value = document.createElement('span');
-    value.className = 'setting-value';
-    head.append(value);
-    control = createRangeInput(feature, setting, controlId);
-  } else {
-    control = createSelectInput(feature, setting, controlId);
-  }
-
-  row.append(head, control);
+  row.append(head, createSelectInput(feature, setting, controlId));
   return row;
 }
 
-/** `<input type="range">` — its live readout lives in `.setting-head`. */
-function createRangeInput(feature, setting, controlId) {
+/** `<input type="number">` — numeric setting, rendered inline in the feature's toggle row. */
+function createNumberInput(feature, setting, controlId) {
   const input = document.createElement('input');
-  input.type = 'range';
-  input.className = 'setting-range-input';
+  input.type = 'number';
+  input.className = 'setting-number-input';
   input.id = controlId;
+  input.setAttribute('aria-label', setting.label);
   input.dataset.featureId = feature.id;
   input.dataset.settingId = setting.id;
-  input.dataset.unit = setting.unit ?? '';
   input.min = String(setting.min ?? 0);
   input.max = String(setting.max ?? 100);
   input.step = String(setting.step ?? 1);
@@ -154,25 +170,8 @@ function createSelectInput(feature, setting, controlId) {
   return select;
 }
 
-/** Refresh the `"{value} {unit}"` readout next to a range slider. */
-function syncRangeReadout(input) {
-  const value = input.closest('.setting-row')?.querySelector('.setting-value');
-  if (!value) return;
-  const unit = input.dataset.unit ? ` ${input.dataset.unit}` : '';
-  value.textContent = `${input.value}${unit}`;
-}
-
-/** Push a stored value onto a control (range values are clamped to min/max). */
+/** Push a stored value onto a control. */
 function applyControlValue(control, setting, value) {
-  if (control instanceof HTMLInputElement && control.type === 'range') {
-    const min = Number(setting.min ?? 0);
-    const max = Number(setting.max ?? 100);
-    const numeric = Number(value);
-    const chosen = Number.isFinite(numeric) ? numeric : Number(setting.defaultValue);
-    control.value = String(Math.min(Math.max(chosen, min), max));
-    syncRangeReadout(control);
-    return;
-  }
   control.value = value == null ? String(setting.defaultValue) : String(value);
 }
 
@@ -246,7 +245,9 @@ function createGroup(group) {
 
   for (const feature of group.features) {
     items.append(createRow(feature));
+    // number settings already render inside the toggle row (createInlineSettings)
     for (const setting of feature.settings ?? []) {
+      if (setting.type === 'number') continue;
       items.append(createSettingRow(feature, setting));
     }
   }
@@ -266,7 +267,7 @@ function getSettingControl(featureId, settingId) {
   const sid = CSS.escape(settingId);
   return listEl.querySelector(
     `.setting-select[data-feature-id="${id}"][data-setting-id="${sid}"], ` +
-      `.setting-range-input[data-feature-id="${id}"][data-setting-id="${sid}"]`,
+      `.setting-number-input[data-feature-id="${id}"][data-setting-id="${sid}"]`,
   );
 }
 
@@ -382,13 +383,14 @@ async function handleGroupToggle(event) {
 async function handleSettingChange(event) {
   const control = event.target;
 
-  // Slider (`range`) → persist a number.
-  if (control instanceof HTMLInputElement && control.matches('.setting-range-input')) {
+  // Number input → persist a number (clamped to the declared range).
+  if (control instanceof HTMLInputElement && control.matches('.setting-number-input')) {
     const { featureId, settingId } = control.dataset;
-    // const setting = getFeature(featureId)?.settings?.find((e) => e.id === settingId);
-    await store.set(settingKey(featureId, settingId), Number(control.value));
-    // const unit = control.dataset.unit ? ` ${control.dataset.unit}` : '';
-    // statusEl.textContent = `${setting?.label ?? settingId}: ${control.value}${unit}`;
+    const value = Number(control.value);
+    if (!Number.isFinite(value)) return; // half-typed input — keep the old value
+    const min = Number(control.min || 0);
+    const max = Number(control.max || 100);
+    await store.set(settingKey(featureId, settingId), Math.min(Math.max(value, min), max));
     return;
   }
 
@@ -418,20 +420,12 @@ function init() {
       handleToggle(event);
       return;
     }
-    if (target instanceof HTMLInputElement && target.matches('.setting-range-input')) {
+    if (target instanceof HTMLInputElement && target.matches('.setting-number-input')) {
       handleSettingChange(event);
       return;
     }
     if (target instanceof HTMLSelectElement && target.matches('.setting-select')) {
       handleSettingChange(event);
-    }
-  });
-
-  // Live readout while dragging a slider (before the value is persisted).
-  listEl.addEventListener('input', (event) => {
-    const target = event.target;
-    if (target instanceof HTMLInputElement && target.matches('.setting-range-input')) {
-      syncRangeReadout(target);
     }
   });
 

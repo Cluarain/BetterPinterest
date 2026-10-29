@@ -244,7 +244,7 @@ body {
   border-color: #ffd6db;
 }
 
-/* ---------- Setting row (feature options: slider / dropdown) ---------- */
+/* ---------- Setting row (dropdown) ---------- */
 .setting-row {
   display: flex;
   flex-direction: column;
@@ -265,18 +265,31 @@ body {
   color: var(--text-muted);
 }
 
-.setting-value {
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-muted);
+/* Number setting embedded in the feature toggle row (before the switch) */
+.setting-inline {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
-/* Slider */
-.setting-range-input {
-  width: 100%;
-  margin: 0;
-  accent-color: var(--pt-red);
-  cursor: pointer;
+.setting-number-input {
+  width: 4.5em;
+  font: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  padding: 2px 4px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  cursor: text;
+}
+
+.setting-unit {
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
 /* Dropdown */
@@ -292,7 +305,7 @@ body {
 }
 
 .setting-select,
-.setting-range-input {
+.setting-number-input {
   &:focus-visible {
     outline: 2px solid var(--pt-red);
     outline-offset: 2px;
