@@ -30,5 +30,5 @@ export const hidePinHeader = {
   type: 'css',
   htmlClass: 'pt-hide-pin-header',
   defaultValue: false,
-  description: 'Hides video timer',
+  description: 'Hides video timer and counter on carousel pins',
 };

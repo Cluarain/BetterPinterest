@@ -611,6 +611,8 @@ html.pt-hide-pin-menu-footer {
    badge, ...).
 ---------------------------------------------------------------------------- */
 html.pt-hide-pin-header {
+
+   [data-test-id="carousel-pin"]>div>div.box_k,
    [data-test-id="PinTypeIdentifier"] {
       display: none !important;
    }
