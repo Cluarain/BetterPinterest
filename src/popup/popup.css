@@ -343,7 +343,10 @@ body {
   overflow: hidden;
   clip-path: inset(50%);
 
-  &:checked+.toggle-body+.toggle-track {
+  /* '~' not '+': rows with an inline setting (e.g. carousel interval) have
+     .setting-inline between .toggle-body and .toggle-track, so '+.toggle-track'
+     never matches and the switch looks off while it is on. */
+  &:checked+.toggle-body~.toggle-track {
     background: var(--track-on);
 
     & .toggle-thumb {
@@ -351,7 +354,7 @@ body {
     }
   }
 
-  &:focus-visible+.toggle-body+.toggle-track {
+  &:focus-visible+.toggle-body~.toggle-track {
     outline: 2px solid var(--pt-red);
     outline-offset: 2px;
   }
