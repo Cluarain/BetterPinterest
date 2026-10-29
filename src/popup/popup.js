@@ -2,8 +2,10 @@
  * popup.js — toggle UI controller.
  * ============================================================================
  * Renders one switch per registered feature, grouped into the same sections
- * declared in `FEATURE_GROUPS` (src/content/features/index.js), plus a control
- * for every declared feature setting (e.g. auto-scroll speed).
+ * declared in `FEATURE_GROUPS` (src/content/features/index.js), a tri-state
+ * master switch in every group header (flips all of the group's features; its
+ * state is DERIVED — it owns no storage key), plus a control for every
+ * declared feature setting (e.g. auto-scroll speed).
  *
  * chrome.storage.local stays the single source of truth: each change is written
  * there and the content script applies it via `storage.onChanged`. The popup
@@ -154,7 +156,47 @@ function applyControlValue(control, setting, value) {
   control.value = value == null ? String(setting.defaultValue) : String(value);
 }
 
-/** Build a popup section for a logical feature group. */
+/**
+ * The master switch inside a group header — flips every feature of the group
+ * at once. It owns NO storage key: its checked/indeterminate/unchecked state
+ * is derived from the group's feature switches (see updateGroupToggleStates).
+ * The "All" caption names the scope explicitly.
+ */
+function createGroupToggle(group) {
+  const label = document.createElement('label');
+  label.className = 'group-toggle';
+  label.title = `Toggle all "${group.title}" features`;
+
+  const input = document.createElement('input');
+  input.type = 'checkbox';
+  input.className = 'group-toggle-input';
+  input.dataset.groupId = group.id;
+  input.setAttribute('aria-label', `Toggle all ${group.title} features`);
+
+  // DOM order: hidden input → caption → track. The caption renders to the LEFT
+  // of the switch while remaining a later sibling of the input, so popup.css
+  // recolors it from the switch state (checked / indeterminate).
+  const caption = document.createElement('span');
+  caption.className = 'group-toggle-caption';
+  caption.textContent = 'All';
+  caption.setAttribute('aria-hidden', 'true');
+
+  const track = document.createElement('span');
+  track.className = 'toggle-track';
+  track.setAttribute('aria-hidden', 'true');
+  const thumb = document.createElement('span');
+  thumb.className = 'toggle-thumb';
+  track.appendChild(thumb);
+
+  label.append(input, caption, track);
+  return label;
+}
+
+/**
+ * Build a popup section for a logical feature group. The header (title +
+ * master switch) is the FIRST row of the bordered card, so the switch visibly
+ * governs exactly the group of toggles beneath it.
+ */
 function createGroup(group) {
   const section = document.createElement('section');
   section.className = 'group';
@@ -163,13 +205,19 @@ function createGroup(group) {
   const headingId = `group-${group.id}`;
   section.setAttribute('aria-labelledby', headingId);
 
+  const items = document.createElement('div');
+  items.className = 'group-items';
+
+  const head = document.createElement('div');
+  head.className = 'group-head';
+
   const heading = document.createElement('h2');
   heading.className = 'group-title';
   heading.id = headingId;
   heading.textContent = group.title;
 
-  const items = document.createElement('div');
-  items.className = 'group-items';
+  head.append(heading, createGroupToggle(group));
+  items.append(head);
 
   for (const feature of group.features) {
     items.append(createRow(feature));
@@ -178,7 +226,7 @@ function createGroup(group) {
     }
   }
 
-  section.append(heading, items);
+  section.append(items);
   return section;
 }
 
@@ -195,6 +243,24 @@ function getSettingControl(featureId, settingId) {
     `.setting-select[data-feature-id="${id}"][data-setting-id="${sid}"], ` +
       `.setting-range-input[data-feature-id="${id}"][data-setting-id="${sid}"]`,
   );
+}
+
+/**
+ * Re-derive every group master switch from its feature switches:
+ *   all on → checked · all off → unchecked · mixed → indeterminate.
+ */
+function updateGroupToggleStates() {
+  for (const group of FEATURE_GROUPS) {
+    const input = listEl.querySelector(
+      `.group-toggle-input[data-group-id="${CSS.escape(group.id)}"]`,
+    );
+    if (!input) continue;
+    const checks = group.features.map((feature) => Boolean(getInput(feature.id)?.checked));
+    const allOn = checks.length > 0 && checks.every(Boolean);
+    const allOff = checks.every((on) => !on);
+    input.checked = allOn;
+    input.indeterminate = !allOn && !allOff;
+  }
 }
 
 /**
@@ -220,18 +286,17 @@ async function syncFromStorage() {
     }
   }
 
+  updateGroupToggleStates();
   applyPopupTheme(state);
 }
 
-async function handleToggle(event) {
-  const input = event.target;
-  if (!(input instanceof HTMLInputElement) || !input.matches('.toggle-input')) return;
-
-  const featureId = input.dataset.featureId;
-  const feature = getFeature(featureId);
-  const enabled = input.checked;
-  const tag = feature?.title ?? featureId;
-
+/**
+ * Persist one feature state and fan the change out — storage first (the single
+ * source of truth), then background worker + active tab for immediate feedback.
+ * @param {string} featureId
+ * @param {boolean} enabled
+ */
+async function setFeatureEnabled(featureId, enabled) {
   // 1) Persist (single source of truth — content scripts apply via storage).
   await store.set(featureId, enabled);
 
@@ -242,22 +307,51 @@ async function handleToggle(event) {
     /* optional channel — the storage change already applies everywhere */
   }
 
-  // 3) Push directly to the active tab and report whether a content script
-  //    actually received it. If the tab has no receiver, the Pinterest page
-  //    was opened before the extension was (re)loaded and needs a refresh.
+  // 3) Push directly to the active tab. If the tab has no receiver, the
+  //    Pinterest page was opened before the extension was (re)loaded and
+  //    needs a refresh — the storage events cover every other case.
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    const response = tab?.id
-      ? await chrome.tabs.sendMessage(tab.id, { type: MESSAGE_TYPE, featureId, enabled })
-      : null;
-    if (response?.ok) {
-      // statusEl.textContent = `${enabled ? 'Enabled' : 'Disabled'} ${tag} — applied on page`;
-      return;
-    }
+    if (tab?.id) await chrome.tabs.sendMessage(tab.id, { type: MESSAGE_TYPE, featureId, enabled });
   } catch {
     /* no content script in the active tab */
   }
-  // statusEl.textContent = `Saved ${tag}. Open or reload pinterest.com to see it.`;
+}
+
+/** One feature switch clicked. */
+async function handleToggle(event) {
+  const input = event.target;
+  if (!(input instanceof HTMLInputElement) || !input.matches('.toggle-input')) return;
+
+  await setFeatureEnabled(input.dataset.featureId, input.checked);
+  updateGroupToggleStates();
+}
+
+/**
+ * The master switch in a group header — applies one state to every feature of
+ * the group. Mixed or all-off → switch the whole group ON; all-on → OFF
+ * (standard tri-state behaviour). Like a single toggle, this just writes each
+ * feature's storage key — no group state is persisted anywhere.
+ */
+async function handleGroupToggle(event) {
+  const input = event.target;
+  if (!(input instanceof HTMLInputElement) || !input.matches('.group-toggle-input')) return;
+
+  const group = FEATURE_GROUPS.find((g) => g.id === input.dataset.groupId);
+  if (!group || group.features.length === 0) return;
+
+  const enabled = !group.features.every((feature) => Boolean(getInput(feature.id)?.checked));
+
+  // Optimistic DOM update (the storage.onChanged handler confirms it), then
+  // persist + fan out and re-derive the master switch.
+  for (const feature of group.features) {
+    const row = getInput(feature.id);
+    if (row) row.checked = enabled;
+  }
+  updateGroupToggleStates();
+
+  await Promise.allSettled(group.features.map((feature) => setFeatureEnabled(feature.id, enabled)));
+  updateGroupToggleStates();
 }
 
 async function handleSettingChange(event) {
@@ -291,6 +385,10 @@ function init() {
 
   listEl.addEventListener('change', (event) => {
     const target = event.target;
+    if (target instanceof HTMLInputElement && target.matches('.group-toggle-input')) {
+      handleGroupToggle(event);
+      return;
+    }
     if (target instanceof HTMLInputElement && target.matches('.toggle-input')) {
       handleToggle(event);
       return;
@@ -328,6 +426,7 @@ function init() {
         if (control && setting) applyControlValue(control, setting, change.newValue);
       }
     }
+    updateGroupToggleStates();
     if ('darkMode' in changes) {
       applyPopupTheme({ darkMode: changes.darkMode.newValue });
     }

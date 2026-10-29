@@ -40,7 +40,7 @@ modules directly from `src/`.
     └── popup
         ├── popup.html          # control panel markup
         ├── popup.css           # toggle switch styles
-        └── popup.js            # renders toggles, writes storage, sends messages
+        └── popup.js            # renders toggles + group master switches, writes storage, sends messages
 ```
 
 ## Data flow
@@ -135,6 +135,26 @@ Read the current values from `this.settingValues` in `onEnable()` and react to
 live changes in the `onSettings(settings)` hook. Nothing else needs to change:
 `DEFAULT_STATE`, the popup control, the storage key and the change-routing in
 `content/index.js` are all derived from the schema.
+
+## Group master switches (popup)
+
+Every group header in the popup carries a master switch that toggles all of the
+group's features at once. It owns **no storage key** — its visual state is
+derived from the group's feature switches:
+
+| Group state | Master switch |
+| --- | --- |
+| every feature on | checked |
+| every feature off | unchecked |
+| mixed | indeterminate (thumb centred) |
+
+Visually the switch is the first row of the group's card — a tinted header
+band with an "All" caption — so the box of toggles it controls is the one
+directly beneath it.
+
+Clicking it writes one boolean per feature (bare `<featureId>` keys), exactly
+like flipping the individual toggles by hand — the content script, registry
+and storage schema need no changes for it.
 
 ## Selector maintenance (important)
 

@@ -17,6 +17,9 @@ Toggles are grouped in the popup by what they affect:
 | Pins | **Hide pin menu** | Hides the "⋯" more-options menu on pins |
 | Feed & Media | **Media autoplay** | Restarts muted looping playback of feed videos/GIFs |
 
+Every group header also carries a master switch that flips all toggles in its
+group at once (it shows a "mixed" state while only some of them are on).
+
 State persists per-browser in `chrome.storage.local`, so your toggles survive
 reloads and restarts.
 
