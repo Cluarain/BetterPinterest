@@ -80,11 +80,20 @@ body {
 .group {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+}
+
+.group-head {
+  /* Header band INSIDE the card: the master switch caps the very box of
+     toggles it controls, so the relation is unmistakable. */
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 14px;
+  background: var(--bg-soft);
 }
 
 .group-title {
-  margin: 0 2px;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.6px;
@@ -259,6 +268,78 @@ body {
   background: #fff;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
   transition: transform 0.15s;
+}
+
+/* ---------- Group master switch (header band of every group card) ---------- */
+/* Same switch anatomy, slightly smaller. DOM order is input → "All" caption →
+   track: the caption renders to the LEFT of the switch yet stays a later
+   sibling of the invisible input, so general-sibling (~) selectors drive both
+   the caption colour and the track from the switch state. */
+.group-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  cursor: pointer;
+  transition: opacity 0.12s;
+
+  &:hover {
+    opacity: 0.85;
+  }
+}
+
+.group-toggle-input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+/* "All" — names what the switch does: flips the entire group. */
+.group-toggle-caption {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.group-toggle-input:checked ~ .group-toggle-caption {
+  color: var(--pt-red);
+}
+
+.group-toggle-input:indeterminate ~ .group-toggle-caption {
+  color: var(--text);
+}
+
+.group-toggle .toggle-track {
+  width: 28px;
+  height: 16px;
+}
+
+.group-toggle .toggle-thumb {
+  width: 12px;
+  height: 12px;
+}
+
+.group-toggle-input:checked ~ .toggle-track {
+  background: var(--track-on);
+
+  & .toggle-thumb {
+    transform: translateX(12px);
+  }
+}
+
+/* Mixed state — only some features of the group are on. */
+.group-toggle-input:indeterminate ~ .toggle-track .toggle-thumb {
+  transform: translateX(6px);
+}
+
+.group-toggle-input:focus-visible ~ .toggle-track {
+  outline: 2px solid var(--pt-red);
+  outline-offset: 2px;
 }
 
 /* ---------- Footer ---------- */
