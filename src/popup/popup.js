@@ -3,9 +3,9 @@
  * ============================================================================
  * Renders one switch per registered feature, grouped into the same sections
  * declared in `FEATURE_GROUPS` (src/content/features/index.js), a tri-state
- * master switch in every group header (flips all of the group's features; its
- * state is DERIVED — it owns no storage key), plus a control for every
- * declared feature setting (e.g. auto-scroll speed).
+ * master switch in every group header with 2+ features (flips all of the
+ * group's features; its state is DERIVED — it owns no storage key), plus a
+ * control for every declared feature setting (e.g. auto-scroll speed).
  *
  * chrome.storage.local stays the single source of truth: each change is written
  * there and the content script applies it via `storage.onChanged`. The popup
@@ -193,9 +193,9 @@ function createGroupToggle(group) {
 }
 
 /**
- * Build a popup section for a logical feature group. The header (title +
- * master switch) is the FIRST row of the bordered card, so the switch visibly
- * governs exactly the group of toggles beneath it.
+ * Build a popup section for a logical feature group. The header (title +, for
+ * groups with 2+ features, the master switch) is the FIRST row of the bordered
+ * card, so the switch visibly governs exactly the group of toggles beneath it.
  */
 function createGroup(group) {
   const section = document.createElement('section');
@@ -216,7 +216,12 @@ function createGroup(group) {
   heading.id = headingId;
   heading.textContent = group.title;
 
-  head.append(heading, createGroupToggle(group));
+  head.append(heading);
+
+  // The "All" master switch only makes sense when the group has 2+ features
+  // to batch — a single-feature group has nothing to toggle in bulk, so it
+  // renders the title alone.
+  if (group.features.length >= 2) head.append(createGroupToggle(group));
   items.append(head);
 
   for (const feature of group.features) {
