@@ -522,6 +522,8 @@ html.pt-dark:has(#featureList) .toggle-badge--js {
    4.1 Search Bar — html.pt-hide-search         (feature: searchBar)
 ---------------------------------------------------------------------------- */
 html.pt-hide-search {
+
+   [data-test-id="scrollable-one-bar-root"],
    #HeaderContent {
       display: none !important;
    }

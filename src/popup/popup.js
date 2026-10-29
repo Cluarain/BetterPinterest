@@ -25,6 +25,9 @@ const store = new Storage('local');
 const listEl = document.getElementById('featureList');
 const statusEl = document.getElementById('status');
 
+/** Tooltip whose ⓘ marker is currently hovered — re-clamped on scroll. */
+let activeTooltip = null;
+
 /**
  * Build the DOM for a single toggle row. The description is NOT rendered
  * inline: it becomes a tooltip (`.toggle-tooltip`) nested inside the
@@ -76,6 +79,18 @@ function createRow(feature) {
   tooltip.textContent = feature.description;
   hint.append(tooltip);
 
+  // CSS centers the tooltip on the marker; a wide one would be clipped by
+  // the window edge, so every hover (re)measures it and nudges it back
+  // inside (see clampTooltip). mouseleave only forgets it as the re-clamp
+  // target used while scrolling.
+  hint.addEventListener('mouseenter', () => {
+    activeTooltip = tooltip;
+    clampTooltip(tooltip);
+  });
+  hint.addEventListener('mouseleave', () => {
+    if (activeTooltip === tooltip) activeTooltip = null;
+  });
+
   titleRow.append(title, hint);
 
   const track = document.createElement('span');
@@ -88,6 +103,53 @@ function createRow(feature) {
   body.append(titleRow);
   label.append(input, body, ...createInlineSettings(feature), track);
   return label;
+}
+
+/** Breathing room kept between the tooltip and the popup window edges. */
+const TOOLTIP_EDGE_GAP = 8;
+
+/**
+ * Keep the floating tooltip fully inside the popup window.
+ *
+ * CSS centers the tooltip on the ⓘ marker; a wide one then overflows the
+ * 320px window and body's `overflow-x: hidden` cuts it off (and scrolled
+ * down, a tall one can run past the top edge). The tooltip is laid out at
+ * opacity:0 — not display:none — so its real box is measurable before the
+ * fade-in. Measured in the neutral (centered) position, it is shifted via
+ * the --tip-shift-x / --tip-shift-y custom properties just enough to clear
+ * both edges, and opened DOWNWARD (`.toggle-tooltip--below`) when there is
+ * no room above it. The ::after arrow offsets by the same X shift, so it
+ * keeps pointing at the marker.
+ * @param {HTMLElement} tooltip
+ */
+function clampTooltip(tooltip) {
+  const gap = TOOLTIP_EDGE_GAP;
+  const view = document.documentElement;
+  const bounds = view.getBoundingClientRect();
+  const topLimit = bounds.top + gap;
+
+  // Measure the default (opens upward) layout: any previous shift and flip
+  // are removed first, so stale values can't skew the decision.
+  tooltip.classList.remove('toggle-tooltip--below');
+  tooltip.style.removeProperty('--tip-shift-x');
+  tooltip.style.removeProperty('--tip-shift-y');
+
+  // No room above (e.g. the popup is scrolled and the row sits at the very
+  // top) → open downward under the marker instead.
+  const aboveTop = tooltip.getBoundingClientRect().top;
+  tooltip.classList.toggle('toggle-tooltip--below', aboveTop < topLimit);
+
+  const tip = tooltip.getBoundingClientRect();
+  // Sticking out left/top → shift right/down (positive); sticking out on
+  // the right shifts left (negative). clientWidth excludes a classic
+  // scrollbar, so the right limit is the actually visible edge.
+  const dx = tip.left < bounds.left + gap
+    ? bounds.left + gap - tip.left
+    : Math.min(0, bounds.left + view.clientWidth - gap - tip.right);
+  const dy = Math.max(0, topLimit - tip.top);
+
+  tooltip.style.setProperty('--tip-shift-x', `${dx}px`);
+  tooltip.style.setProperty('--tip-shift-y', `${dy}px`);
 }
 
 /**
@@ -428,6 +490,13 @@ function init() {
       handleSettingChange(event);
     }
   });
+
+  // A marker kept hovered across a scroll would show a stale clamp —
+  // re-measure while a tooltip is visible. (Capture: body's overflow
+  // propagates to the viewport, so the event fires on document, not body.)
+  document.addEventListener('scroll', () => {
+    if (activeTooltip) clampTooltip(activeTooltip);
+  }, { capture: true, passive: true });
 
   // Keep the popup in sync if another popup/tab changes a toggle or a setting.
   store.onChanged((changes) => {
