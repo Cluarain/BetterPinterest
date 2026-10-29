@@ -14,9 +14,9 @@
 
 export const darkMode = {
   id: 'darkMode',
-  title: 'Dark Mode',
+  title: 'Dark mode',
   type: 'css',
   htmlClass: 'pt-dark',
   defaultValue: false,
-  description: 'Dark theme base across Pinterest.',
+  description: 'Dark theme base across Pinterest',
 };

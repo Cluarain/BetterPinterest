@@ -17,18 +17,18 @@
 
 export const hidePinMenu = {
   id: 'hidePinMenu',
-  title: 'Hide Pin Menu',
+  title: 'Hide menu',
   type: 'css',
   htmlClass: 'pt-hide-pin-menu-footer',
   defaultValue: false,
-  description: 'Hides "more options" menu on pins.',
+  description: 'Hides "more options" menu and interactions on pins',
 };
 
 export const hidePinHeader = {
   id: 'hidePinHeader',
-  title: 'Hide Pin Header Info',
+  title: 'Hide header info',
   type: 'css',
   htmlClass: 'pt-hide-pin-header',
   defaultValue: false,
-  description: 'Hides header info on pins.',
+  description: 'Hides video timer',
 };

@@ -111,20 +111,20 @@ const HOVER_RELEASE_AFTER_VIDEO_MS = 100;
 
 export const gifAutoplay = {
   id: 'gifAutoplay',
-  title: 'GIF Autoplay',
+  title: 'GIF autoplay',
   type: 'js',
   htmlClass: 'pt-autoplay-gif',
   defaultValue: false,
-  description: 'Replaces static GIF-pin thumbnails with the original animated .gif.',
+  description: 'Replaces static GIF-pin thumbnails with the original animated .gif',
 };
 
 export const videoAutoplay = {
   id: 'videoAutoplay',
-  title: 'Video Autoplay',
+  title: 'Video autoplay',
   type: 'js',
   htmlClass: 'pt-autoplay-video',
   defaultValue: false,
-  description: 'Autoplays pin videos and aggressively bypasses Pinterest pause in the feed.',
+  description: 'Autoplays pin videos and aggressively bypasses Pinterest pause in the feed',
 };
 
 // ============================================================================

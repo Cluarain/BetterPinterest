@@ -26,6 +26,9 @@ body {
   background: var(--bg);
   max-height: 800px;
   overflow-y: auto;
+  /* Tooltips anchored to their ⓘ marker may reach past the window edge —
+     clip instead of growing a horizontal scrollbar. */
+  overflow-x: hidden;
 }
 
 /* ---------- Header ---------- */
@@ -91,6 +94,9 @@ body {
   gap: 10px;
   padding: 9px 14px;
   background: var(--bg-soft);
+  /* Card's top corners — .group-items has no overflow:hidden (it would clip
+     the description tooltips), so the first child rounds itself. */
+  border-radius: 11px 11px 0 0;
 }
 
 .group-title {
@@ -106,13 +112,20 @@ body {
   flex-direction: column;
   border: 1px solid var(--border);
   border-radius: 12px;
-  overflow: hidden;
   background: var(--bg);
 
-  /* Every row gets a top divider; the first one sits flush with the border. */
+  /* Every row gets a top divider; the first one sits flush with the border.
+     Deliberately NO overflow:hidden — it would clip the description tooltips
+     floating above the rows; the card corners are instead rounded on the
+     head (always the first child) and on the last child (see below). */
   &>*+* {
     border-top: 1px solid var(--border);
   }
+}
+
+/* Card's bottom corners — whatever the last row is (toggle or setting). */
+.group-items> :last-child {
+  border-radius: 0 0 11px 11px;
 }
 
 .toggle-row {
@@ -146,9 +159,71 @@ body {
   font-weight: 600;
 }
 
-.toggle-desc {
-  font-size: 11px;
+/* "ⓘ" marker — THE tooltip trigger and its positioning anchor: the tooltip
+   element lives inside it and shows only while the marker is hovered.
+   CSS-drawn (like the logo); the click is neutralised in popup.js. */
+.toggle-hint {
+  position: relative; /* containing block for .toggle-tooltip */
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
   color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1;
+  cursor: help;
+
+  /* "i" is visual only — empty alternative text keeps it silent for
+     assistive tech (the description is exposed via aria-describedby). */
+  &::before {
+    content: "i" / "";
+  }
+
+  /* The only reveal path: hovering the marker itself. */
+  &:hover .toggle-tooltip {
+    opacity: 1;
+    /* transition-delay: 0.4s; */
+  }
+}
+
+/* Feature description as a hover-only tooltip, anchored to the ⓘ marker:
+   centered above it, so the ::after arrow points straight at the icon.
+   Hidden with `opacity` — not display:none — so the checkbox's
+   aria-describedby target stays exposed to assistive technology. */
+.toggle-tooltip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%);
+  z-index: 10;
+  width: max-content;
+  max-width: 240px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: #2b2b2b;
+  color: #fff;
+  font-size: 11px;
+  line-height: 1.35;
+  text-align: left;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.1s ease;
+
+  &::after {
+    position: absolute;
+    left: 50%;
+    bottom: 0;
+    transform: translate(-50%, 50%);
+    content: '▼';
+    width: 10px;
+    height: 10px;
+    color: #2b2b2b;
+  }
 }
 
 .toggle-badge {
@@ -306,11 +381,11 @@ body {
   color: var(--text-muted);
 }
 
-.group-toggle-input:checked ~ .group-toggle-caption {
+.group-toggle-input:checked~.group-toggle-caption {
   color: var(--pt-red);
 }
 
-.group-toggle-input:indeterminate ~ .group-toggle-caption {
+.group-toggle-input:indeterminate~.group-toggle-caption {
   color: var(--text);
 }
 
@@ -324,7 +399,7 @@ body {
   height: 12px;
 }
 
-.group-toggle-input:checked ~ .toggle-track {
+.group-toggle-input:checked~.toggle-track {
   background: var(--track-on);
 
   & .toggle-thumb {
@@ -333,11 +408,11 @@ body {
 }
 
 /* Mixed state — only some features of the group are on. */
-.group-toggle-input:indeterminate ~ .toggle-track .toggle-thumb {
+.group-toggle-input:indeterminate~.toggle-track .toggle-thumb {
   transform: translateX(6px);
 }
 
-.group-toggle-input:focus-visible ~ .toggle-track {
+.group-toggle-input:focus-visible~.toggle-track {
   outline: 2px solid var(--pt-red);
   outline-offset: 2px;
 }

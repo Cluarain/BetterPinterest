@@ -583,7 +583,10 @@ html.pt-hide-left-menu {
 ---------------------------------------------------------------------------- */
 html.pt-hide-pin-menu-footer {
 
-   [data-test-id="proactive-outreach-flyout"],
+   [data-test-id="proactive-outreach-flyout"] {
+      display: none !important;
+   }
+
    [data-test-id="pin-missing-alt-text"],
    [data-test-id="pin-with-alt-text"] {
       [data-test-id="pointer-events-wrapper"] {

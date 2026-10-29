@@ -19,27 +19,27 @@
 
 export const leftMenu = {
   id: 'leftMenu',
-  title: 'Hide Left Menu',
+  title: 'Hide left menu',
   type: 'css',
   htmlClass: 'pt-hide-left-menu',
   defaultValue: false,
-  description: 'Hides the left navigation sidebar.',
+  description: 'Hides the left navigation sidebar',
 };
 
 export const searchBar = {
   id: 'searchBar',
-  title: 'Hide Search Bar',
+  title: 'Hide search bar',
   type: 'css',
   htmlClass: 'pt-hide-search',
   defaultValue: false,
-  description: 'Hides the top search bar.',
+  description: 'Hides the top search bar',
 };
 
 export const tabsBar = {
   id: 'tabsBar',
-  title: 'Hide Tabs Bar',
+  title: 'Hide tabs bar',
   type: 'css',
   htmlClass: 'pt-hide-tabs',
   defaultValue: false,
-  description: 'Hides the top tabs bar.',
+  description: 'Hides the top tabs bar',
 };

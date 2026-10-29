@@ -25,7 +25,13 @@ const store = new Storage('local');
 const listEl = document.getElementById('featureList');
 const statusEl = document.getElementById('status');
 
-/** Build the DOM for a single toggle row. */
+/**
+ * Build the DOM for a single toggle row. The description is NOT rendered
+ * inline: it becomes a tooltip (`.toggle-tooltip`) nested inside the
+ * decorative "ⓘ" marker and revealed by CSS only while that marker is
+ * hovered. The checkbox keeps its aria-describedby pointing at the tooltip
+ * element, so screen readers still announce the description.
+ */
 function createRow(feature) {
   const label = document.createElement('label');
   label.className = 'toggle-row';
@@ -51,12 +57,26 @@ function createRow(feature) {
   badge.className = `toggle-badge toggle-badge--${feature.type}`;
   badge.textContent = feature.type === 'js' ? 'JS' : 'CSS';
 
-  const desc = document.createElement('span');
-  desc.className = 'toggle-desc';
-  desc.id = `desc-${feature.id}`;
-  desc.textContent = feature.description;
+  // "ⓘ" marker — the tooltip trigger AND its positioning anchor: the
+  // tooltip element lives INSIDE it (kept out of aria-hidden so the
+  // checkbox's aria-describedby still reaches the text). The marker sits
+  // inside the row <label>, so a click on it must not flip the switch —
+  // hovering is all it is for.
+  const hint = document.createElement('span');
+  hint.className = 'toggle-hint';
+  hint.addEventListener('click', (event) => event.preventDefault());
 
-  titleRow.append(title, badge);
+  // Description as a hover-only tooltip. Hidden via `opacity` (NOT display)
+  // so the aria-describedby target stays in the accessibility tree; CSS
+  // reveals it only while the marker itself is hovered.
+  const tooltip = document.createElement('span');
+  tooltip.className = 'toggle-tooltip';
+  tooltip.id = `desc-${feature.id}`;
+  tooltip.setAttribute('role', 'tooltip');
+  tooltip.textContent = feature.description;
+  hint.append(tooltip);
+
+  titleRow.append(title, badge, hint);
 
   const track = document.createElement('span');
   track.className = 'toggle-track';
@@ -65,7 +85,7 @@ function createRow(feature) {
   thumb.className = 'toggle-thumb';
   track.appendChild(thumb);
 
-  body.append(titleRow, desc);
+  body.append(titleRow);
   label.append(input, body, track);
   return label;
 }
